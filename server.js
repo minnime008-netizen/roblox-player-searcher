@@ -1,68 +1,32 @@
 const express = require("express");
 
 const app = express();
+const PORT = process.env.PORT || 10000;
 
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-
-/*
-==============================================================
- CONFIG
-==============================================================
-*/
-
-const SEARCH_LIMIT = 50;
-
-// Random two-letter searches.
-// This gives us a changing pool of Roblox users.
 const LETTERS = "abcdefghijklmnopqrstuvwxyz";
 
-let recentUsers = new Map();
-
-/*
-==============================================================
- HELPERS
-==============================================================
-*/
-
-function randomLetters(length = 2) {
+function randomKeyword() {
     let result = "";
 
-    for (let i = 0; i < length; i++) {
-        result += LETTERS[
-            Math.floor(Math.random() * LETTERS.length)
-        ];
+    for (let i = 0; i < 2; i++) {
+        result += LETTERS[Math.floor(Math.random() * LETTERS.length)];
     }
 
     return result;
 }
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/*
-==============================================================
- ROBLOX USER SEARCH
-==============================================================
-*/
-
-async function searchRobloxUsers() {
-
-    const keyword = randomLetters(2);
+async function searchUsers() {
+    const keyword = randomKeyword();
 
     const url =
-        "https://users.roblox.com/v1/users/search" +
-        `?keyword=${encodeURIComponent(keyword)}` +
-        `&limit=${SEARCH_LIMIT}`;
+        `https://users.roblox.com/v1/users/search?keyword=${encodeURIComponent(keyword)}&limit=50`;
 
     const response = await fetch(url);
 
     if (!response.ok) {
-        throw new Error(
-            `Roblox user search failed: ${response.status}`
-        );
+        throw new Error(`User search failed: ${response.status}`);
     }
 
     const data = await response.json();
@@ -70,23 +34,14 @@ async function searchRobloxUsers() {
     return data.data || [];
 }
 
-/*
-==============================================================
- PRESENCE
-==============================================================
-*/
-
 async function getPresence(userId) {
-
     const response = await fetch(
         "https://presence.roblox.com/v1/presence/users",
         {
             method: "POST",
-
             headers: {
                 "Content-Type": "application/json"
             },
-
             body: JSON.stringify({
                 userIds: [userId]
             })
@@ -94,9 +49,7 @@ async function getPresence(userId) {
     );
 
     if (!response.ok) {
-        throw new Error(
-            `Roblox presence request failed: ${response.status}`
-        );
+        throw new Error(`Presence failed: ${response.status}`);
     }
 
     const data = await response.json();
@@ -104,20 +57,12 @@ async function getPresence(userId) {
     return data.userPresences?.[0] || null;
 }
 
-/*
-==============================================================
- GAME NAME
-==============================================================
-*/
-
 async function getGameName(universeId) {
-
     if (!universeId) {
         return null;
     }
 
     try {
-
         const response = await fetch(
             `https://games.roblox.com/v1/games?universeIds=${universeId}`
         );
@@ -128,145 +73,53 @@ async function getGameName(universeId) {
 
         const data = await response.json();
 
-        if (
-            data.data &&
-            data.data.length > 0
-        ) {
-            return data.data[0].name || null;
-        }
+        return data.data?.[0]?.name || null;
 
-    } catch (err) {
-        console.log(
-            "Game lookup failed:",
-            err.message
-        );
+    } catch {
+        return null;
     }
-
-    return null;
 }
 
-/*
-==============================================================
- STATUS TRANSLATION
-==============================================================
-
-0 = Offline
-1 = Online
-2 = In Game
-3 = In Studio
-*/
-
 function getStatus(presence) {
-
     if (!presence) {
-
         return {
-            code: "offline",
+            status: "offline",
             text: "🔴 Offline"
         };
-
     }
 
     switch (presence.userPresenceType) {
 
-        case 2:
-
-            return {
-                code: "playing",
-                text: "🎮 Currently Playing"
-            };
-
         case 1:
-
             return {
-                code: "online",
+                status: "online",
                 text: "🟢 In Roblox Menus"
             };
 
-        case 3:
-
+        case 2:
             return {
-                code: "studio",
+                status: "playing",
+                text: "🎮 Currently Playing"
+            };
+
+        case 3:
+            return {
+                status: "studio",
                 text: "🎮 In Roblox Studio"
             };
 
         default:
-
             return {
-                code: "offline",
+                status: "offline",
                 text: "🔴 Offline"
             };
     }
 }
 
 /*
-==============================================================
- RANDOM USER
-==============================================================
-*/
-
-async function getRandomUser() {
-
-    for (let attempt = 0; attempt < 8; attempt++) {
-
-        const users = await searchRobloxUsers();
-
-        if (!users.length) {
-            continue;
-        }
-
-        // Shuffle
-        users.sort(() => Math.random() - 0.5);
-
-        for (const user of users) {
-
-            if (!user || !user.id) {
-                continue;
-            }
-
-            // Don't repeat very recently shown users.
-            if (recentUsers.has(user.id)) {
-                continue;
-            }
-
-            recentUsers.set(
-                user.id,
-                Date.now()
-            );
-
-            return user;
-        }
-
-        await sleep(100);
-    }
-
-    return null;
-}
-
-/*
-==============================================================
- CLEAN OLD CACHE
-==============================================================
-*/
-
-setInterval(() => {
-
-    const now = Date.now();
-
-    for (const [userId, time] of recentUsers) {
-
-        // Forget users after 10 minutes.
-        if (now - time > 10 * 60 * 1000) {
-            recentUsers.delete(userId);
-        }
-    }
-
-}, 60 * 1000);
-
-/*
-==============================================================
- API
-==============================================================
+============================================================
+HOME
+============================================================
 */
 
 app.get("/", (req, res) => {
@@ -274,48 +127,50 @@ app.get("/", (req, res) => {
     res.json({
         success: true,
         service: "Roblox Player Searcher",
-        status: "online"
+        status: "online",
+        endpoint: "/random"
     });
 
 });
 
 /*
-==============================================================
- /random
-==============================================================
+============================================================
+RANDOM PLAYER
+============================================================
 */
 
 app.get("/random", async (req, res) => {
 
     try {
 
-        const user = await getRandomUser();
+        const users = await searchUsers();
 
-        if (!user) {
-
-            return res.status(503).json({
+        if (!users.length) {
+            return res.status(404).json({
                 success: false,
-                error: "No random user found"
+                error: "No users found"
             });
-
         }
 
-        const presence = await getPresence(user.id);
+        const user =
+            users[Math.floor(Math.random() * users.length)];
 
-        const status = getStatus(presence);
+        const presence =
+            await getPresence(user.id);
+
+        const status =
+            getStatus(presence);
 
         let gameName = null;
 
         if (
             presence &&
-            presence.userPresenceType === 2 &&
-            presence.universeId
+            presence.userPresenceType === 2
         ) {
-
-            gameName = await getGameName(
-                presence.universeId
-            );
-
+            gameName =
+                await getGameName(
+                    presence.universeId
+                );
         }
 
         res.json({
@@ -331,7 +186,8 @@ app.get("/random", async (req, res) => {
 
             presence: {
 
-                status: status.code,
+                status: status.status,
+
                 text: status.text,
 
                 gameName: gameName,
@@ -354,6 +210,7 @@ app.get("/random", async (req, res) => {
             success: false,
 
             error: error.message
+
         });
 
     }
@@ -361,9 +218,9 @@ app.get("/random", async (req, res) => {
 });
 
 /*
-==============================================================
- START SERVER
-==============================================================
+============================================================
+START
+============================================================
 */
 
 app.listen(PORT, () => {
